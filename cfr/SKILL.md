@@ -1,222 +1,147 @@
 ---
-description: Codebase Fitness Review — มาตรฐานร่วมสำหรับ review Go template repos (go-ms-otel, go-ms-otel-simple, go-kafka-otel-clean, go-kafka-otel-simple). Use when auditing, reviewing, or creating Go service repos under techcoach/template.
+description: Cross Functional Requirements — standards for Go service repos. Use when creating, auditing, or reviewing Go microservice repositories for structural and operational compliance.
 ---
 
-## Template Repository Checklist — มาตรฐานร่วม 4 Repos
+# Cross Functional Requirements (CFR)
 
-> Repos: `go-ms-otel` · `go-ms-otel-simple` · `go-kafka-otel-clean` · `go-kafka-otel-simple`
-
----
+Standards that every Go service repository must satisfy. Each section defines mandatory rules; items marked *(Advanced)* are recommended but not required for compliance.
 
 ## 1. Go Module & Dependencies
 
-- [ ] **go.mod ใช้ module path รูปแบบ `gitdev.devops.krungthai.com/techcoach/template/<repo-name>.git`**
-- [ ] **Go version ล่าสุด** — ตอนนี้คือ `go 1.27.x` ต้องตรงกับ Dockerfile builder image เสมอ
-- [ ] **ใช้ lib เวอร์ชันล่าสุดเสมอ** — ตรวจด้วย `go list -m -u all` เป็น periodic task
-- [ ] **ใช้ stdlib ก่อนเสมอ** — ถ้า stdlib ทำได้ ไม่เพิ่ม external dependency (เช่น `net/http` ก่อน gin, `slog` ก่อน zap)
-- [ ] **ใช้ newer Go features** — generics, `range over func`, `copyloopvar`, `intrange` ถ้าเหมาะสม
-- [ ] **ไม่มี deprecated lib** — ตรวจด้วย `gomodguard_v2` ใน golangci-lint (block `golang/protobuf`, `satori/go.uuid`, `gofrs/uuid`)
-- [ ] **`go mod tidy` ผ่าน** — ไม่มี unused require ค้างไว้
-- [ ] **`go mod verify` ผ่าน** — checksum ถูกต้อง
-- [ ] **`govulncheck ./...` ผ่าน** — ไม่มี known CVE ใน code ที่เรียกใช้จริง
-
----
+- Module path must be a fully-qualified, organization-scoped path (no personal or placeholder domains).
+- Go version in `go.mod` must match the builder image in Dockerfile and the CI runner.
+- Prefer stdlib over external dependencies — add a third-party package only when stdlib cannot do the job.
+- Pin all dependencies to concrete versions; no `latest` or floating tags.
+- Run `go mod tidy`, `go mod verify`, and `govulncheck ./...` — all must pass with zero output.
+- Block deprecated modules via linter configuration (e.g. `gomodguard`).
+- Use modern language features (generics, `range over func`, `copyloopvar`) where they improve clarity.
 
 ## 2. Build, Test, Vet
 
-- [ ] **`go build ./...` ผ่าน** — compile ทุก package ได้
-- [ ] **`go vet ./...` ผ่าน** — ไม่มี suspicious construct
-- [ ] **`go test -race ./...` ผ่าน** — ทุก test green, ไม่มี data race
-- [ ] **มี test ครอบคลุม domain layer เสมอ** — service_test.go อย่างน้อย 1 ไฟล์
-- [ ] **ไม่มี dead code** — ตรวจด้วย `deadcode ./...` หรือ `unused` linter ใน golangci-lint
-- [ ] **test ที่ fail ต้องเขียนก่อนแก้ bug** — TDD: RED → GREEN → REFACTOR
-
----
+- `go build ./...`, `go vet ./...`, and `go test -race ./...` must all pass.
+- Every domain package must have at least one `_test.go` file covering core logic.
+- No dead code — verify with `deadcode` or an `unused` linter.
+- A failing test must be written before the fix that makes it pass (TDD: RED → GREEN → REFACTOR).
 
 ## 3. Project Structure
 
-- [ ] **Screaming architecture** — domain package ตั้งชื่อตาม business domain (`permit`, `consumer`, `interpermit`) ไม่ใช่ technical role (`handler`, `service`, `util`)
-- [ ] **`main.go` เป็น composition root** — wire dependencies ที่นี่ ไม่มี business logic
-- [ ] **`internal/` บรรจุ domain + usecase + adapter** — ไม่ expose ออกนอก module
-- [ ] **`pkg/` บรรจุ reusable tech packages** — config, otel, logger, probe, kafka เป็นต้น
-- [ ] **Clean architecture (ถ้า repo แบบ clean)** — domain package imports เฉพาะ stdlib, ไม่มี sarama/gin/otel ใน domain
-- [ ] **Port/Adapter separation (ถ้า repo แบบ clean)** — `port.go` นิยาม interfaces, adapter subpackages implement
-
----
+- Package names must reflect business domains (`permit`, `loan`, `booking`), never technical roles (`handler`, `service`, `util`).
+- `main.go` is the composition root — it wires dependencies and contains no business logic.
+- `internal/` holds domain, usecase, and adapter packages; nothing inside it is importable from outside the module.
+- `pkg/` holds reusable technical packages; it must never import from `internal/`.
+- In clean-architecture repos: domain packages import only stdlib; adapters live in domain subpackages and implement interfaces declared in `port.go`.
 
 ## 4. Dockerfile
 
-- [ ] **Multi-stage build** — builder stage (golang:alpine) → runtime stage (alpine)
-- [ ] **Alpine + tini** — ไม่ใช้ Chainguard, ใช้ tini สำหรับ SIGTERM จาก K8s
-- [ ] **Non-root USER** — `adduser -D -H appuser` + `USER appuser`
-- [ ] **HEALTHCHECK** — ใช้ `wget --spider http://localhost:8080/liveness`
-- [ ] **`COPY --link`** — ใช้ copylink สำหรับ layer efficiency
-- [ ] **Build cache mount** — `--mount=type=cache,target=/go/pkg/mod`
-- [ ] **Static binary** — `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`
-- [ ] **`ARG GIT_COMMIT`** — ฝัง commit hash ผ่าน `-X main.commit=$GIT_COMMIT`
-- [ ] **Image pin** — ระบุ tag ชัดเจน (ไม่ใช้ `:latest`) ถ้ามี digest ยิ่งดี
-- [ ] **GO_VERSION ใน Dockerfile ตรงกับ go directive ใน go.mod**
-
----
+- Multi-stage build: builder stage compiles, runtime stage runs the binary.
+- Runtime base image must be minimal (Alpine or equivalent) with an init process (`tini` or `--init`) for proper signal handling.
+- Run as a non-root user — create a dedicated user and switch to it.
+- Include a `HEALTHCHECK` directive pointing at the liveness endpoint.
+- Use `COPY --link` for layer efficiency and `--mount=type=cache` for module cache.
+- Build a static binary: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`.
+- Embed commit hash via build arg and `-ldflags -X`.
+- Pin base image by digest or explicit tag — never `:latest`.
+- Go version in the builder image must match `go.mod`.
 
 ## 5. Makefile
 
-- [ ] **มี targets: `build`, `test`, `vet`, `lint`, `run`, `clean`, `deps`**
-- [ ] **`test` ใช้ `-race -count=1`** — detect data race, ไม่ cache
-- [ ] **`lint` ใช้ `golangci-lint run`**
-- [ ] **`build` ใช้ `CGO_ENABLED=0 -trimpath -ldflags="-s -w"`**
-- [ ] **มี `coverage` target** — `-coverprofile` + `go tool cover`
-- [ ] **มี `bump-version version=vX.Y.Z` target**
-- [ ] *(ขั้นสูง)* **มี `vuln` target** — `govulncheck ./...`
-- [ ] *(ขั้นสูง)* **มี `precommit` target** — `all + vuln + go mod verify + go vet`
-- [ ] *(ขั้นสูง)* **มี `ci` target** — `precommit + diff`
-- [ ] *(ขั้นสูง)* **มี `docker` target** — ส่ง `GIT_COMMIT` + `VERSION` เป็น build-arg
+- Required targets: `build`, `test`, `vet`, `lint`, `run`, `clean`, `deps`.
+- `test` must use `-race -count=1`.
+- `build` must use `CGO_ENABLED=0 -trimpath -ldflags="-s -w"`.
+- Include `coverage` target with `-coverprofile`.
+- *(Advanced)* `vuln` (govulncheck), `precommit` (all checks + verify + vet), `ci` (precommit + diff), `docker` (with build args).
 
----
+## 6. Linter Configuration
 
-## 6. .golangci.yaml
+- Use golangci-lint v2 format (`version: "2"`).
+- Minimum linters: `errcheck`, `govet`, `staticcheck`, `unused`, `gosec`, `revive`, `gocritic`, `bodyclose`.
+- *(Advanced)* Add: `funlen` (≤100), `gocognit` (≤20), `sloglint`, `perfsprint`, `unparam`, `nestif`, `copyloopvar`, `intrange`.
+- Exclude test files from `funlen`, `gocognit`, `gosec`.
+- Exclude generated code from `unused`, `staticcheck`.
 
-- [ ] **golangci-lint v2 format** — `version: "2"`
-- [ ] **Linters ขั้นต่ำ:** `errcheck`, `govet`, `staticcheck`, `unused`, `gosec`, `revive`, `gocritic`, `bodyclose`
-- [ ] *(ขั้นสูง)* **Linters เพิ่ม:** `funlen` (≤100 lines), `gocognit` (≤20 complexity), `sloglint`, `perfsprint`, `unparam`, `whitespace`, `nestif`, `forbidigo`, `predeclared`, `usestdlibvars`, `copyloopvar`, `intrange`
-- [ ] **`gomodguard_v2`** — block deprecated modules
-- [ ] **Test files มี exclusion** — ผ่อน `funlen`, `gocognit`, `gosec` ใน `_test.go`
-- [ ] **Generated code มี exclusion** — `openapi.gen.go` ผ่อน `unused`, `staticcheck`
+## 7. Environment Template
 
----
+- No hardcoded secrets — use placeholders only.
+- Include observability config keys (service name, exporter endpoint, insecure flag).
+- Include `LOG_LEVEL` (DEBUG/INFO/WARN/ERROR).
+- Include health probe config (address or port).
+- Every variable must map to a config struct field — no orphan variables.
+- TLS/SASL defaults must be safe (disabled by default).
 
-## 7. .env.template
+## 8. Ignore Files
 
-- [ ] **ไม่มี hardcoded secrets** — ใช้ placeholder หรือค่าว่าง
-- [ ] **มี OTel config** — `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_INSECURE`
-- [ ] **มี `LOG_LEVEL`** — DEBUG/INFO/WARN/ERROR
-- [ ] **มี health probe config** — `HEALTH_ADDR` หรือ `PORT`
-- [ ] **OTEL_SERVICE_NAME ตรงกับชื่อ repo**
-- [ ] **TLS/SASL config มี default ปลอดภัย** — `KAFKA_TLS_ENABLE=false`, `KAFKA_SASL_ENABLE=false`
-- [ ] **ทุก variable map ไปยัง config struct** — ไม่มี orphan env var
+- `.gitignore` must exclude: secrets files, build output, coverage files, editor directories, OS artifacts.
+- `.dockerignore` must exclude: `.git`, secrets, Makefile, compose files, docs (except README), build output.
+- Agent/CI artifacts must not be committed.
 
----
+## 9. Observability
 
-## 8. .gitignore & .dockerignore
+- OTel SDK must set up traces and metrics in a reusable package.
+- Structured logging must inject `trace_id` for log-trace correlation.
+- Expose `/metrics` (Prometheus) and health probes (`/liveness`, `/readiness`).
+- Traces and metrics must be individually disableable via env flags while keeping no-op handlers.
+- Propagate W3C `traceparent` on both inbound and outbound calls.
 
-- [ ] **`.gitignore` มี:** `.env`, `bin/`, `coverage.out`, `.idea/`, `.vscode/`, `*.exe`, `.DS_Store`
-- [ ] **`.dockerignore` มี:** `.git`, `.env`, `Makefile`, `docker-compose.yml`, `*.md` (ยกเว้น `!README.md`), `bin/`, `coverage.*`
-- [ ] **Hermes artifacts ไม่ commit** — `.hermes/`, `.security-review-plan.md`
+## 10. OpenAPI *(HTTP services only)*
 
----
+- Spec file, generated Go code, and codegen config must all exist under a dedicated directory.
+- `make openapi-gen` regenerates; `make openapi-check` fails CI if generated code is stale.
+- Codegen tool version must be pinned.
 
-## 9. OpenTelemetry & Observability
+## 11. CI Pipeline
 
-- [ ] **OTel SDK setup** — traces + metrics ใน `pkg/otel/`
-- [ ] **slog handler ฉีด trace_id** — log และ trace correlate
-- [ ] **Prometheus `/metrics` endpoint** — ใช้ `prometheus/client_golang` หรือ OTel exporter
-- [ ] **Health probes** — `/liveness` (K8s liveness), `/readiness` หรือ `/readyz`
-- [ ] **`OTEL_TRACES_ENABLED` flag** — สามารถ disable ได้โดยยังมี tracer (NeverSample)
-- [ ] **`OTEL_METRICS_ENABLED` flag** — สามารถ disable ได้
-- [ ] **W3C traceparent propagation** — รับ inbound, ฉีด outbound
+- Stages: validate → test → containerize → scan → deploy.
+- Validate: tag and Dockerfile validation.
+- Test: coverage, secret detection, dependency scan.
+- Scan: container image scan and SAST.
+- Go version in CI must match `go.mod`.
+- *(Advanced)* OpenAPI spec drift check.
 
----
+## 12. README
 
-## 10. OpenAPI (ถ้าเป็น HTTP service)
+- Document architecture layout and dependency rules.
+- Provide quickstart: setup, env copy, compose up, run.
+- Include an observability section and a project structure tree.
+- List all environment variables with references to the env template.
+- Repository name in README must match the actual repo name.
 
-- [ ] **`openapi/openapi.yaml`** — spec นิยาม API
-- [ ] **`openapi/openapi.gen.go`** — generated code จาก spec
-- [ ] **`openapi/codegen.yaml`** — oapi-codegen config
-- [ ] **`make openapi-gen`** — regenerate ได้
-- [ ] **`make openapi-check`** — fail ถ้า generated code stale (CI gate)
-- [ ] **oapi-codegen version ถูก pin** — ป้องกัน drift ระหว่าง dev กับ CI
+## 13. CHANGELOG & CONTRIBUTING
 
----
+- CHANGELOG must have a dated entry for the latest change.
+- CONTRIBUTING must cover: dev setup, pre-commit steps, how to add a domain package.
+- In clean-arch repos, CONTRIBUTING must explain the architecture rules.
 
-## 11. GitLab CI (ถ้ามี)
+## 14. Scripts
 
-- [ ] **`gitlabci.yml` มี stages:** validate → test → containerize → scan → deploy
-- [ ] **Validate:** tag validation, Dockerfile validation
-- [ ] **Test:** coverage test (Go), secret detection, dependency scan (OWASP)
-- [ ] **Containerize:** build Docker image
-- [ ] **Scan:** SonarQube, Rapid7 (container scan), NexusIQ
-- [ ] **`GO_VERSION` ใน CI ตรงกับ go directive ใน go.mod**
-- [ ] **OpenAPI spec drift check** — ถ้ามี openapi/
+- Setup and version-bump scripts must exist and be executable.
+- *(Advanced)* Dev dependency installer, pre-commit hook setup, commit message convention, test output colorizer.
+- No script may contain hardcoded secrets — read from environment variables.
 
----
+## 15. Security
 
-## 12. README.md
-
-- [ ] **อธิบาย architecture** — layout, dependency rule, domain purity (ถ้า clean)
-- [ ] **Quickstart** — `make setup`, `cp .env.template .env`, `docker compose up`, `make run`
-- [ ] **OTel section** — อธิบาย traces, metrics, logs correlation
-- [ ] **Project structure tree** — แสดงโครงสร้างไดเรกทอรี
-- [ ] **Environment variables** — อ้างอิง `.env.template`
-- [ ] **ชื่อ repo ใน README ตรงกับชื่อจริง**
-
----
-
-## 13. CHANGELOG.md & CONTRIBUTING.md
-
-- [ ] **CHANGELOG.md มี entry ล่าสุด** — วันที่, สรุปการเปลี่ยนแปลง
-- [ ] **CONTRIBUTING.md มี:** development setup, before-commit steps, วิธี add domain
-- [ ] **CONTRIBUTING.md อธิบาย clean architecture rules** (ถ้า repo แบบ clean)
-
----
-
-## 14. Scripts & Infrastructure Files
-
-- [ ] **`.scripts/setup.sh`** — install deps + tools
-- [ ] **`.scripts/bump-version.sh`** — bump VERSION + tag
-- [ ] **`.scripts/observability/prometheus.yml`** — scrape config, `job_name` ตรงกับ repo
-- [ ] *(ขั้นสูง)* **`.scripts/install-deps.sh`** — ติดตั้ง dev dependencies
-- [ ] *(ขั้นสูง)* **`.scripts/setup-pre-commit.sh`** — pre-commit hooks
-- [ ] *(ขั้นสูง)* **`.scripts/commit-msg.sh`** — commit message convention
-- [ ] *(ขั้นสูง)* **`.scripts/colorize`** — สี output ของ `make test`
-- [ ] **ทุก script มี `chmod +x`** — executable
-- [ ] **Scripts ไม่มี hardcoded secrets** — รับจาก env var
-
----
-
-## 15. Security (Secured Dev Perspective)
-
-- [ ] **ไม่มี hardcoded credentials** ใน code, config, Dockerfile, scripts
-- [ ] **Docker non-root user** — `USER appuser`
-- [ ] **ไม่มี `InsecureSkipVerify: true`** ใน TLS config
-- [ ] **`.env.template` ไม่มี password จริง** — placeholder เท่านั้น
-- [ ] **DLQ headers ไม่ leak sensitive data** — ไม่ฉีด full error stack ลง `x-error` header
-- [ ] **govulncheck ผ่าน** — ไม่มี called vulnerability
-- [ ] *(ขั้นสูง)* **SOPS + age** — encrypt `.env` → `.env.enc` (Makefile targets: `env-keygen`, `env-decrypt`, `env-encrypt`)
-- [ ] *(ขั้นสูง)* **gosec linter** — ผ่านใน golangci-lint
-- [ ] *(ขั้นสูง)* **Secret detection ใน CI** — GitLab secret_detection
-
----
+- No hardcoded credentials anywhere in the repository.
+- Docker must run as non-root.
+- No `InsecureSkipVerify: true` in any TLS config.
+- Env template must contain placeholders, never real credentials.
+- DLQ or error headers must not leak stack traces or sensitive data.
+- `govulncheck` must pass.
+- *(Advanced)* SOPS/age encryption for env files, `gosec` in linter config, secret detection in CI.
 
 ## 16. Version & Release
 
-- [ ] **`VERSION` file** — รูปแบบ `vX.Y.Z` (semver)
-- [ ] **VERSION ใช้ใน Docker label** — `LABEL version="${VERSION}"`
-- [ ] **VERSION ใช้ใน health probe response** — ตอบกลับใน `/liveness`
-- [ ] **`make bump-version version=vX.Y.Z`** — อัปเดต VERSION + git tag
+- A `VERSION` file using semver (`vX.Y.Z`).
+- Version must appear in Docker label and health probe response.
+- A `make bump-version` target updates VERSION and creates a git tag.
 
----
+## 17. docker-compose
 
-## 17. docker-compose.yml
+- Include only services needed for local development of this repo.
+- Service and cluster names must reference the repo name.
+- *(Advanced)* Volume mounts for persistence; network isolation to prevent unintended port exposure.
 
-- [ ] **มี services ที่จำเป็น** — Kafka (KRaft), Jaeger, Prometheus (ตามประเภท service)
-- [ ] **ชื่อ service/cluster_id อ้างอิงชื่อ repo**
-- [ ] **Volume mount สำหรับ persistence** (ถ้าจำเป็น)
-- [ ] **Network isolation** — ไม่ expose port ออกนอก localhost โดยไม่จำเป็น
+## 18. HTTP Status Convention *(HTTP services only)*
 
----
-
-## 18. HTTP Status Convention (ถ้าเป็น HTTP service)
-
-- [ ] **14 status codes:** 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504
-- [ ] **4xx = no retry, 5xx = retry**
-- [ ] **ทุก error response มี `error_code` ใน body**
-- [ ] **Orchestration เช็คแค่ 3 groups:** 2xx/4xx/5xx
-
----
-
-## วิธีใช้
-
-1. Clone repo ที่ต้อง review
-2. วิ่งทุก section ตาม checklist — tick `[x]` สำหรับข้อที่ผ่าน, note gap สำหรับข้อที่ fail
-3. รันคำสั่ง verify จริง: `go build ./...`, `go vet ./...`, `go test -race ./...`, `golangci-lint run`, `govulncheck ./...`
-4. สรุป gap ที่เหลือ + แนะนำวิธีปิด
+- Use exactly 14 status codes: 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504.
+- 4xx errors are not retryable; 5xx errors are retryable.
+- Every error response body must include a machine-readable `error_code` field.
+- Orchestration layers should branch on three groups only: 2xx, 4xx, 5xx.

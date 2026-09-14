@@ -1,51 +1,46 @@
 ---
-description: Go Clean Architecture patterns from go-ms-otel. Use when creating or modifying Go code — new domain packages, handlers, ports, adapters, or wiring in main.go.
+description: Go clean architecture — hexagonal, onion, screaming, DCI. Use when creating or modifying Go domain packages, ports, adapters, handlers, or wiring.
 ---
 
-## Structure
+## Hexagonal — ports & adapters
+A **port** is an interface declared in the domain. An **adapter** is a concrete that implements it.
+- Driving port: how the outside calls in (handler method on a `Context` interface)
+- Driven port: how the domain calls out (`UserFinder`, `Repository`)
+- The domain never sees the adapter; it only sees the port. Dependency inverted.
 
+## Onion — dependency flows inward only
+`adapter → domain ← adapter` but never `domain → adapter`.
+- Domain parent imports ONLY stdlib (no gin, pgx, sarama, no own pkg/)
+- Driven adapters import domain (for types) + tech (for impl) — they are outside
+- `main.go` is the composition root: the only place that knows concrete types
+- `pkg/` helpers are outside the onion; `pkg/` never imports `internal/`
+
+## Screaming — the structure tells you what the system does
+Read every package name out loud. If it names the **business** (`permit`, `loan`, `booking`) it passes. If it names a **layer or pattern** (`core`, `service`, `handler`, `consumer`, `adapter`) it fails.
+- Name adapters by **intent** (`userfinder`, `userstorage`) not **tech** (`client`, `postgres`)
+- No `internal/adapter/` — adapters are **subpackages of the domain**: `internal/<domain>/userfinder/`
+- Opening `internal/<domain>/` shows everything about that domain
+
+## DCI — Context is the role the domain declares
+The domain defines a `Context` interface with only the methods it needs (`ShouldBindJSON`, `JSON`, `context.Context`). The framework fills the role at runtime.
+- `pkg/framework/NewHandler[C]` casts `*gin.Context` → `C` — the sole gin import
+- Domain validates its own invariants (no `binding:"required"` from a spec generator)
+- Tests pass a `stubContext` — no gin, no router, no HTTP stack
+- `DomainError` is the domain's error vocabulary; adapters translate foreign errors into it at the boundary (anti-corruption layer)
+
+## Illustration
 ```
-main.go                    ← wiring only, no logic
-internal/<domain>/         ← stdlib ONLY (entity, port, service, handler)
-internal/<domain>/<adapter>/ ← driven adapter subpackage (userfinder/, userstorage/)
-pkg/                       ← tech helpers (framework/, config/, middleware/, probe/)
+main.go                         ← wires concretes, no logic
+internal/<domain>/              ← onion center: entity, port, service, handler
+internal/<domain>/<adapter>/    ← driven adapters (hexagonal outside)
+pkg/framework/                  ← fills the Context role (DCI)
 ```
-
-## Rules
-
-1. Domain imports ONLY stdlib (+ pkg/framework in handler.go)
-2. Adapters are domain subpackages — no `internal/adapter/`
-3. `pkg/` never imports `internal/`
-4. `main.go` wires only — no business logic
-5. Package name = business term (`permit`, `loan`), not role (`service`, `handler`)
-
-## Per-file essentials
-
-**entity.go** — domain types + request/response structs (owns wire shape)
-**port.go** — `UserFinder`, `Repository` interfaces — domain types only, no transport
-**service.go** — `DomainError{Code,Message,Err}` + `NewDomainError(code,msg,cause)` + use case depending on ports
-**handler.go** — `Context` interface (`context.Context` + `ShouldBindJSON` + `JSON`), `PermitService` interface, `mapDomainErrorToHTTP`, domain validates own invariants
-**userfinder/user_finder.go** — anti-corruption: translate HTTP→DomainError at boundary, wire envelope stays unexported in adapter
-**userstorage/user_storage.go** — implements `Repository`, takes entity not wire envelope
-
-## Framework bridge (pkg/framework/gin.go)
-
-`NewHandler[C any](handler func(C)) gin.HandlerFunc` — sole gin import; domain never imports gin.
-`StdContext(c)` — unwraps `*gin.Context` → `request.Context()` for middleware values.
-
-## main.go wiring order
-
-config → otel/logger → gin+middleware → probes → adapters → service → handler → `framework.NewHandler(h.Method)` → start+shutdown
-
-## Testing
-
-Stub `Context` (no gin, no router): `stubContext{body, jsonCode, jsonBody}` implementing the domain interface. Test handler logic purely.
 
 ## Checklist
-
-- Domain parent imports only stdlib (+ pkg/framework)
-- No `internal/adapter/` dir
-- Handler depends on interface, not `*Service`
-- Adapter errors return `*DomainError`
-- `var _ Port = (*Impl)(nil)` in adapter tests
+- Domain parent: stdlib only (+ pkg/framework in handler.go)
+- No `internal/adapter/` — adapters are domain subpackages
+- Package names are business terms, not architecture terms
+- Handler depends on port interface, not concrete `*Service`
+- Adapter errors → `*DomainError` at the boundary
+- `var _ Port = (*Impl)(nil)` compile-time proof in adapter tests
 - `go build ./... && go vet ./... && go test ./...` pass

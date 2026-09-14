@@ -1,37 +1,33 @@
 # go-clean
 
-Claude Code skill สำหรับเขียน Go ตาม Clean Architecture ที่สกัดจาก go-ms-otel.
+Claude Code skill สอน Go clean architecture ผ่าน 4 แกน concept: hexagonal, onion, screaming, DCI.
 
 ## ที่มา
 
-สกัดแพทเทิร์นจริงจาก `gitdev.devops.krungthai.com/techcoach/template/go-ms-otel` —
-Go microservice template ที่ใช้ Clean Architecture (onion/hexagonal/screaming) ใน Krungthai TechCoach.
+สกัดจาก go-ms-otel และ clean-architecture workshop (coffeeshop-clean) —
+ใช้ concept คุม ไม่ใช่ structure คุม. ตัวอย่าง structure เป็น illustration เล็กๆ.
 
-## โครงสร้าง
+## โครงสร้างไฟล์
 
 ```
 go-clean/
 ├── README.md     ← ไฟล์นี้
-└── SKILL.md      ← Claude Code skill (frontmatter + compact instructions)
+└── SKILL.md      ← Claude Code skill (46 lines, concept-driven)
 ```
 
-## วิธีติดตั้ง
+## 4 แกน
 
-คัดลอก `go-clean/` ไปไว้ใน `.claude/skills/` ของ project:
+| แกน | core concept |
+|---|---|
+| **Hexagonal** | Port = interface ใน domain, adapter = concrete ข้างนอก, dependency inverted |
+| **Onion** | dependency ไหลเข้าศูนย์เท่านั้น, domain import stdlib อย่างเดียว |
+| **Screaming** | อ่านชื่อ package แล้วรู้ว่าระบบทำอะไร — business term ไม่ใช่ layer/pattern |
+| **DCI** | Context = role ที่ domain ประกาศ, framework เติม implementation ตอน runtime |
+
+## วิธีติดตั้ง
 
 ```bash
 cp -r go-clean/ <project>/.claude/skills/go-clean/
 ```
 
-Claude Code จะโหลด skill อัตโนมัติเวลาเขียน/แก้ Go code หรือ invoke ด้วย `/go-clean`.
-
-## แพทเทิร์นหลัก
-
-| แพทเทิร์น | รายละเอียด |
-|---|---|
-| Handler-in-domain | HTTP handler อยู่ใน domain package, ใช้ `Context` interface |
-| Framework bridge | `pkg/framework/NewHandler[C]` — จุดเดียวที่ import gin |
-| Driven adapters | subpackage ของ domain (`internal/<domain>/userfinder/`) |
-| DomainError | adapter แปลง error ที่ boundary (anti-corruption layer) |
-| Screaming arch | package name = business term (`permit`), ไม่ใช่ role (`service`) |
-| Stub testing | test ผ่าน stub Context ไม่ต้องมี gin/router |
+Claude Code โหลดอัตโนมัติเวลาเขียน Go code หรือ invoke ด้วย `/go-clean`.

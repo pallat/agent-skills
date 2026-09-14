@@ -1,91 +1,150 @@
 ---
-description: Cross Functional Requirements — standards for Go service repos. Use when creating, auditing, or reviewing Go microservice repositories for structural and operational compliance.
+description: Cross Functional Requirements — audit Go service repos for consistency, orphans, dangling references, and correctness. Use when reviewing or cleaning up Go microservice repositories.
 ---
 
 # Cross Functional Requirements (CFR)
 
-Mandatory standards for every Go service repository. *(Adv)* = recommended.
+Audit framework for Go service repos. Every check asks: **does what exists agree with what else exists?** — not "does a specific file exist."
 
-## 1. Module & Dependencies
-- Module path must be fully-qualified and organization-scoped.
-- Go version in `go.mod` must match Dockerfile builder and CI runner.
-- Prefer stdlib — add external deps only when stdlib cannot do the job.
-- Pin all deps to concrete versions; no floating tags.
-- `go mod tidy`, `go mod verify`, `govulncheck ./...` must pass clean.
-- Block deprecated modules via linter config. Use modern features (generics, `range over func`) where they help.
+Five audit dimensions:
 
-## 2. Build, Test, Vet
-- `go build ./...`, `go vet ./...`, `go test -race ./...` must pass.
-- Every domain package needs ≥1 `_test.go` covering core logic.
-- No dead code — verify via `deadcode` or `unused` linter.
-- Failing test before fix (TDD: RED → GREEN → REFACTOR).
+| Dimension | Question | Action |
+|---|---|---|
+| **Consistency** | A says X — does B agree? | Fix the mismatch |
+| **Orphans** | A exists — does anything use it? | Remove or wire up |
+| **Dangling** | A references B — does B exist? | Fix or remove reference |
+| **Gates** | Do mandatory commands pass? | Fix until green |
+| **Security** | Do forbidden patterns appear? | Eliminate |
 
-## 3. Dockerfile
-- Multi-stage: builder compiles, runtime runs binary on minimal image (Alpine or equiv) with init process (`tini`/`--init`).
-- Non-root user, `HEALTHCHECK` at liveness endpoint, `COPY --link`, `--mount=type=cache`.
-- Static binary: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`. Embed commit hash via `-ldflags -X`.
-- Pin base image by digest or explicit tag — never `:latest`.
+*(Adv)* = recommended.
 
-## 4. Makefile
-- Required targets: `build`, `test`, `vet`, `lint`, `run`, `clean`, `deps`, `coverage`.
-- `test` uses `-race -count=1`; `build` uses `CGO_ENABLED=0 -trimpath -ldflags="-s -w"`.
-- *(Adv)* `vuln`, `precommit`, `ci`, `docker` targets.
+---
 
-## 5. Linter Config
-- golangci-lint v2 (`version: "2"`). Minimum: `errcheck`, `govet`, `staticcheck`, `unused`, `gosec`, `revive`, `gocritic`, `bodyclose`.
+## 1. Build & Test Gates
+
+- `go build ./...` — all packages compile.
+- `go vet ./...` — no suspicious constructs.
+- `go test -race ./...` — all green, no data race.
+- `go mod tidy` — no unused requires.
+- `go mod verify` — checksums valid.
+- `govulncheck ./...` — no called CVEs.
+- `golangci-lint run` — passes (including `unused`, `deadcode` if enabled).
+
+---
+
+## 2. Cross-File Consistency
+
+Mismatch between files that should agree = bug.
+
+- **Go version**: `go.mod` directive == Dockerfile builder image == CI `GO_VERSION`.
+- **Module path**: `go.mod` module path == actual repo URL.
+- **OTel service name**: `OTEL_SERVICE_NAME` default == repo name == Prometheus `job_name`.
+- **Version**: `VERSION` file == Docker `LABEL version` == health probe response == latest git tag.
+- **Env vars ↔ config struct**: every var in `.env.template` is read by code; every env var read by code is in `.env.template`. No orphans either direction.
+- **README env vars ↔ `.env.template`**: documented vars match template exactly.
+- **README repo name == actual repo name**.
+- **README quickstart commands**: every `make <target>` and file path referenced in README exists.
+- **OpenAPI spec ↔ generated code**: `openapi.gen.go` not stale vs `openapi.yaml` (`make openapi-check`).
+- **Makefile targets ↔ CI**: every target CI invokes exists and works.
+- **Health endpoints ↔ K8s/compose probes**: `/liveness`, `/readiness` paths in code match probe config.
+- **Dockerfile `ARG` ↔ usage**: every declared `ARG` is consumed in a build stage.
+- **Default values**: config defaults in code match documented defaults in README and `.env.template`.
+- **CHANGELOG ↔ reality**: latest entry date is recent and reflects actual changes.
+
+---
+
+## 3. Orphan Detection — Exists But Unused
+
+Things present in the repo that nothing references or invokes. Remove or wire up.
+
+- **Env vars**: `.env.template` defines vars no code path reads → remove.
+- **Scripts**: shell scripts never invoked by Makefile, CI, or another script → remove or wire up.
+- **Makefile targets**: not called by CI, not in `make help`, not documented → question relevance.
+- **Config struct fields**: populated from env but never read by business logic → remove.
+- **Dependencies**: `go.mod` requires modules never imported → `go mod tidy`.
+- **Dead code**: exported funcs/types never called outside own package → remove.
+- **Linter exclusions**: `path`/`exclude` rules for directories that don't exist → remove stale rules.
+- **`.gitignore` / `.dockerignore` entries**: patterns that never match anything → remove noise.
+- **docker-compose services**: defined but not needed for local dev → remove.
+- **Docker build stages**: never referenced by `COPY --from=` → remove.
+- **Test files**: `_test.go` for packages that no longer exist → remove.
+
+---
+
+## 4. Dangling References — Points To Nothing
+
+Things that reference targets that don't exist. Fix or remove the reference.
+
+- **Scripts → files**: script references file paths (configs, binaries, other scripts) that don't exist.
+- **Makefile → scripts/binaries**: target calls a script or binary not in repo or not on `PATH`.
+- **CI → targets/images**: pipeline calls Makefile targets or container images that don't exist.
+- **CONTRIBUTING → steps**: references setup scripts or targets that don't exist.
+- **Code → config keys**: code reads env vars not in `.env.template` → add to template or remove code.
+- **Imports → local packages**: code imports internal packages that don't exist or were moved.
+
+---
+
+## 5. Security — Forbidden Patterns
+
+Must not appear anywhere in the repo.
+
+- Hardcoded credentials in code, config, Dockerfile, scripts, or compose.
+- Real passwords/tokens/keys in `.env.template` — placeholders only.
+- `InsecureSkipVerify: true` in TLS config.
+- `:latest` image tags in Dockerfile or compose — pin by digest or explicit tag.
+- DLQ/error headers leaking full stack traces or sensitive data.
+- Docker running as root — must have non-root `USER`.
+- *(Adv)* SOPS/age encryption for `.env`; secret detection in CI; `gosec` in linter.
+
+---
+
+## 6. Dockerfile Correctness
+
+- Multi-stage: builder compiles, runtime on minimal image (Alpine + `tini`/`--init`).
+- Static binary: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"`.
+- `HEALTHCHECK` hits liveness endpoint. `COPY --link` for layers. `--mount=type=cache` for build cache.
+- Commit hash embedded via `-ldflags -X main.commit=...`.
+
+---
+
+## 7. Observability Correctness
+
+- OTel SDK (traces + metrics) in reusable package. Structured logging injects `trace_id`.
+- `/metrics` (Prometheus), `/liveness`, `/readiness` exposed.
+- Traces and metrics individually disableable via env flags (no-op when off, not crash).
+- W3C `traceparent` propagated inbound and outbound.
+
+---
+
+## 8. Structural Conventions
+
+- **Screaming architecture**: domain packages named by business domain (`permit`, `consumer`), not technical role (`handler`, `service`, `util`).
+- `main.go` is composition root — wires deps, no business logic.
+- `internal/` holds domain + usecase + adapter; `pkg/` holds reusable tech packages.
+- Clean-arch repos: domain imports stdlib only. `port.go` defines interfaces; adapters implement.
+
+---
+
+## 9. Linter Config
+
+- golangci-lint v2 (`version: "2"`).
+- Minimum: `errcheck`, `govet`, `staticcheck`, `unused`, `gosec`, `revive`, `gocritic`, `bodyclose`.
 - *(Adv)* `funlen` (≤100), `gocognit` (≤20), `sloglint`, `perfsprint`, `unparam`, `nestif`, `copyloopvar`, `intrange`.
-- Exclude test files from `funlen`, `gocognit`, `gosec`; exclude generated code from `unused`, `staticcheck`.
+- `gomodguard_v2` blocks deprecated modules.
+- Test files excluded from `funlen`, `gocognit`, `gosec`; generated code excluded from `unused`, `staticcheck`.
 
-## 6. Environment Template
-- No hardcoded secrets — placeholders only. Include observability keys, `LOG_LEVEL`, health probe config.
-- Every variable maps to a config struct field — no orphans. TLS/SASL defaults disabled.
+---
 
-## 7. Ignore Files
-- `.gitignore`: secrets, build output, coverage, editor dirs, OS artifacts.
-- `.dockerignore`: `.git`, secrets, Makefile, compose files, docs (except README), build output.
-- Agent/CI artifacts must not be committed.
+## 10. HTTP Conventions *(HTTP only)*
 
-## 8. Observability
-- OTel SDK (traces + metrics) in a reusable package. Structured logging injects `trace_id`.
-- Expose `/metrics` (Prometheus), `/liveness`, `/readiness`.
-- Traces and metrics individually disableable via env flags (no-op handlers).
-- Propagate W3C `traceparent` inbound and outbound.
+- 14 codes: 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504.
+- 4xx = no retry, 5xx = retry. Every error body includes `error_code`.
+- Orchestration branches on 2xx/4xx/5xx only.
 
-## 9. OpenAPI *(HTTP only)*
-- Spec, generated Go code, and codegen config in a dedicated directory.
-- `make openapi-gen` regenerates; `make openapi-check` fails CI on stale code. Codegen tool version pinned.
+---
 
-## 10. CI Pipeline
+## 11. CI Pipeline
+
 - Stages: validate → test → containerize → scan → deploy.
 - Validate: tag + Dockerfile validation. Test: coverage, secret detection, dep scan. Scan: container + SAST.
-- CI Go version must match `go.mod`. *(Adv)* OpenAPI spec drift check.
-
-## 11. README
-- Document architecture layout, dependency rules, quickstart, observability section, and project structure tree.
-- List all environment variables referencing the env template. Repo name must match actual name.
-
-## 12. CHANGELOG & CONTRIBUTING
-- CHANGELOG has a dated latest entry.
-- CONTRIBUTING covers dev setup, pre-commit steps, and how to add a domain package.
-- Clean-arch repos: CONTRIBUTING explains architecture rules.
-
-## 13. Scripts
-- `setup.sh` and `bump-version.sh` must exist and be executable. No script contains hardcoded secrets.
-- *(Adv)* Dev dep installer, pre-commit setup, commit-msg convention, test colorizer.
-
-## 14. Security
-- No hardcoded credentials anywhere. Docker non-root; no `InsecureSkipVerify: true` in TLS config.
-- Env template placeholders only; DLQ/error headers must not leak sensitive data. `govulncheck` passes.
-- *(Adv)* SOPS/age env encryption, `gosec` in linter, secret detection in CI.
-
-## 15. Version & Release
-- `VERSION` file using semver (`vX.Y.Z`). Version in Docker label and health probe response.
-- `make bump-version` updates VERSION and creates git tag.
-
-## 16. docker-compose
-- Include only services needed for local dev. Service/cluster names reference repo name.
-- *(Adv)* Volume mounts for persistence; network isolation.
-
-## 17. HTTP Status Convention *(HTTP only)*
-- 14 codes: 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504.
-- 4xx = no retry, 5xx = retry. Every error body includes `error_code`. Orchestration branches on 2xx/4xx/5xx only.
+- *(Adv)* OpenAPI spec drift check.

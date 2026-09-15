@@ -20,6 +20,19 @@ Five audit dimensions:
 
 ---
 
+## 0. Prerequisites
+
+Tools required before running this audit:
+
+- `go` (toolchain matching `go.mod`)
+- `golangci-lint` (v2)
+- `govulncheck`
+- `deadcode` *(Adv)*
+
+Install missing tools before proceeding. A gate that cannot run is not a gate that passed.
+
+---
+
 ## 1. Build & Test Gates
 
 - `go build ./...` — all packages compile.
@@ -29,6 +42,7 @@ Five audit dimensions:
 - `go mod verify` — checksums valid.
 - `govulncheck ./...` — no called CVEs.
 - `golangci-lint run` — passes (including `unused`, `deadcode` if enabled).
+- Domain packages must have test coverage ≥ 60%. Verify with `go test -cover ./internal/...`.
 
 ---
 
@@ -40,16 +54,16 @@ Mismatch between files that should agree = bug.
 - **Module path**: `go.mod` module path == actual repo URL.
 - **OTel service name**: `OTEL_SERVICE_NAME` default == repo name == Prometheus `job_name`.
 - **Version**: `VERSION` file == Docker `LABEL version` == health probe response == latest git tag.
-- **Env vars ↔ config struct**: every var in `.env.template` is read by code; every env var read by code is in `.env.template`. No orphans either direction.
+- **Env vars ↔ code**: every var in `.env.template` is read by code (config struct, `os.Getenv`, or OTel SDK); every env var read by code is in `.env.template`. No orphans either direction. Check `main.go` and all config packages, not just one.
 - **README env vars ↔ `.env.template`**: documented vars match template exactly.
 - **README repo name == actual repo name**.
 - **README quickstart commands**: every `make <target>` and file path referenced in README exists.
-- **OpenAPI spec ↔ generated code**: `openapi.gen.go` not stale vs `openapi.yaml` (`make openapi-check`).
+- **OpenAPI spec ↔ generated code**: `openapi.gen.go` not stale vs `openapi.yaml` (`make openapi-check` exits 0).
 - **Makefile targets ↔ CI**: every target CI invokes exists and works.
 - **Health endpoints ↔ K8s/compose probes**: `/liveness`, `/readiness` paths in code match probe config.
 - **Dockerfile `ARG` ↔ usage**: every declared `ARG` is consumed in a build stage.
 - **Default values**: config defaults in code match documented defaults in README and `.env.template`.
-- **CHANGELOG ↔ reality**: latest entry date is recent and reflects actual changes.
+- **CHANGELOG ↔ reality**: latest entry reflects actual changes. `[Unreleased]` section is acceptable; if it lists changes, they must match the diff since last tag. A dated released entry must exist for the current `VERSION`.
 
 ---
 
@@ -58,7 +72,7 @@ Mismatch between files that should agree = bug.
 Things present in the repo that nothing references or invokes. Remove or wire up.
 
 - **Env vars**: `.env.template` defines vars no code path reads → remove.
-- **Scripts**: shell scripts never invoked by Makefile, CI, or another script → remove or wire up.
+- **Scripts**: shell scripts never invoked by Makefile, CI, CONTRIBUTING, or another script → remove or wire up.
 - **Makefile targets**: not called by CI, not in `make help`, not documented → question relevance.
 - **Config struct fields**: populated from env but never read by business logic → remove.
 - **Dependencies**: `go.mod` requires modules never imported → `go mod tidy`.
@@ -111,7 +125,7 @@ Must not appear anywhere in the repo.
 
 - OTel SDK (traces + metrics) in reusable package. Structured logging injects `trace_id`.
 - `/metrics` (Prometheus), `/liveness`, `/readiness` exposed.
-- Traces and metrics individually disableable via env flags (no-op when off, not crash).
+- Traces and metrics individually disableable via env flags (no-op when off, not crash). Flags may be read in `main.go` or the OTel package — both are valid.
 - W3C `traceparent` propagated inbound and outbound.
 
 ---
@@ -137,7 +151,7 @@ Must not appear anywhere in the repo.
 
 ## 10. HTTP Conventions *(HTTP only)*
 
-- 14 codes: 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504.
+- Must not use status codes outside this set: 200/201/204, 400/401/403/404/409/422/429, 500/502/503/504.
 - 4xx = no retry, 5xx = retry. Every error body includes `error_code`.
 - Orchestration branches on 2xx/4xx/5xx only.
 
@@ -147,4 +161,4 @@ Must not appear anywhere in the repo.
 
 - Stages: validate → test → containerize → scan → deploy.
 - Validate: tag + Dockerfile validation. Test: coverage, secret detection, dep scan. Scan: container + SAST.
-- *(Adv)* OpenAPI spec drift check.
+- *(Adv)* OpenAPI spec drift check. *(Adv)* Automated dependency update bot (e.g. Renovate, Dependabot) configured.

@@ -12,7 +12,7 @@ Claude Code skill สอน Go clean architecture ผ่าน 4 แกน conce
 ```
 go-clean/
 ├── README.md     ← ไฟล์นี้
-└── SKILL.md      ← Claude Code skill (46 lines, concept-driven)
+└── SKILL.md      ← Claude Code skill (43 lines, concept-driven)
 ```
 
 ## 4 แกน

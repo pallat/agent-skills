@@ -3,44 +3,41 @@ description: Go clean architecture — hexagonal, onion, screaming, DCI. Use whe
 ---
 
 ## Hexagonal — ports & adapters
-A **port** is an interface declared in the domain. An **adapter** is a concrete that implements it.
-- Driving port: how the outside calls in (handler method on a `Context` interface)
-- Driven port: how the domain calls out (`UserFinder`, `Repository`)
-- The domain never sees the adapter; it only sees the port. Dependency inverted.
+A **port** is an interface declared in the domain. An **adapter** is a concrete outside it that implements it.
+- Driving port: how the outside calls in
+- Driven port: how the domain calls out
+- The domain never sees the adapter, only the port — dependency inverted
 
 ## Onion — dependency flows inward only
-`adapter → domain ← adapter` but never `domain → adapter`.
-- Domain parent imports ONLY stdlib (no gin, pgx, sarama, no own pkg/)
-- Driven adapters import domain (for types) + tech (for impl) — they are outside
-- `main.go` is the composition root: the only place that knows concrete types
-- `pkg/` helpers are outside the onion; `pkg/` never imports `internal/`
+`adapter → domain ← adapter`, never `domain → adapter`.
+- Domain package imports stdlib only — no third-party packages, no own `pkg/` helpers
+- Adapters import the domain (for types) plus their own tech — they sit outside
+- The composition root is the only place that knows concrete types and wires them together
 
 ## Screaming — the structure tells you what the system does
-Read every package name out loud. If it names the **business** (`permit`, `loan`, `booking`) it passes. If it names a **layer or pattern** (`core`, `service`, `handler`, `consumer`, `adapter`) it fails.
-- Name adapters by **intent** (`userfinder`, `userstorage`) not **tech** (`client`, `postgres`)
-- No `internal/adapter/` — adapters are **subpackages of the domain**: `internal/<domain>/userfinder/`
-- Opening `internal/<domain>/` shows everything about that domain
+Package name = business term, never a layer or pattern word.
+- Name adapters by intent, not by the tech they wrap
+- No shared `adapter/`/`port/`/`interfaces/` package — each lives beside the domain it serves
+- Opening one domain's folder shows everything about that domain
 
-## DCI — Context is the role the domain declares
-The domain defines a `Context` interface with only the methods it needs (`ShouldBindJSON`, `JSON`, `context.Context`). The framework fills the role at runtime.
-- `pkg/framework/NewHandler[C]` casts `*gin.Context` → `C` — the sole gin import
-- Domain validates its own invariants (no `binding:"required"` from a spec generator)
-- Tests pass a `stubContext` — no gin, no router, no HTTP stack
-- `DomainError` is the domain's error vocabulary; adapters translate foreign errors into it at the boundary (anti-corruption layer)
+## DCI — the domain declares the role it needs
+The domain defines a minimal role interface for what it needs from the outside. The composition root supplies a concrete that fills that role at wiring time.
+- Domain validates its own invariants — it never trusts an external contract to do that for it
+- Tests fill the role with a stub — no framework, no real infra
+- Foreign errors are translated into the domain's own error type at the boundary
 
 ## Illustration
 ```
-main.go                         ← wires concretes, no logic
-internal/<domain>/              ← onion center: entity, port, service, handler
-internal/<domain>/<adapter>/    ← driven adapters (hexagonal outside)
-pkg/framework/                  ← fills the Context role (DCI)
+main.go             ← composition root: wires concretes, no logic
+internal/<domain>/  ← onion center: entity, port, service, handler
+internal/<domain>/<driven-adapter>/ ← subpackage of the domain it serves
 ```
 
 ## Checklist
-- Domain parent: stdlib only (+ pkg/framework in handler.go)
-- No `internal/adapter/` — adapters are domain subpackages
+- Domain package imports stdlib only
+- No shared `adapter/`/`port/`/`interfaces/` package
 - Package names are business terms, not architecture terms
-- Handler depends on port interface, not concrete `*Service`
-- Adapter errors → `*DomainError` at the boundary
-- `var _ Port = (*Impl)(nil)` compile-time proof in adapter tests
+- Handler/service depends on an interface it declares, not a concrete
+- Adapter errors are translated into the domain's error type at the boundary
+- Compile-time proof an adapter satisfies its port (`var _ Port = (*Impl)(nil)`)
 - `go build ./... && go vet ./... && go test ./...` pass
